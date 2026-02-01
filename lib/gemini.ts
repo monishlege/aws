@@ -18,27 +18,46 @@ if (!apiKey) {
 const genAI = new GoogleGenerativeAI(apiKey);
 
 export async function generateLabFromNotes(notes: string): Promise<LabResponse> {
-  const preferred = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  let model = genAI.getGenerativeModel({ model: preferred });
-
-  const prompt =
-    "Transform the following messy lecture notes into a structured interactive coding lab. " +
-    'Return only valid JSON with shape { "steps": [{ "title": string, "description": string, "code"?: string }] }. ' +
-    "Use concise, actionable steps. Include code snippets when helpful. Notes:\n" +
-    notes;
-
+  const candidates = [
+    process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash-001",
+    "gemini-1.0-pro",
+  ];
+  let lastError: unknown;
+  let model;
   let result;
-  try {
-    result = await model.generateContent(prompt);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("404 Not Found")) {
-      model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      result = await model.generateContent(prompt);
-    } else {
-      throw e;
+  for (const m of candidates) {
+    try {
+      model = genAI.getGenerativeModel({ model: m });
+      result = await model.generateContent({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text:
+                  "Transform the following messy lecture notes into a structured interactive coding lab. " +
+                  'Return only valid JSON with shape { "steps": [{ "title": string, "description": string, "code"?: string }] }. ' +
+                  "Use concise, actionable steps. Include code snippets when helpful. Notes:\n" +
+                  notes,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+        },
+      });
+      break;
+    } catch (e) {
+      lastError = e;
     }
   }
+  if (!result) {
+    throw lastError instanceof Error ? lastError : new Error("Generation failed");
+  }
+
   const text = result.response.text().trim();
 
   try {
@@ -48,6 +67,13 @@ export async function generateLabFromNotes(notes: string): Promise<LabResponse> 
     const fence = /```json([\\s\\S]*?)```/i.exec(text);
     if (fence && fence[1]) {
       const parsed = JSON.parse(fence[1]);
+      return parsed as LabResponse;
+    }
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      const sliced = text.slice(start, end + 1);
+      const parsed = JSON.parse(sliced);
       return parsed as LabResponse;
     }
     throw new Error("Model output is not valid JSON");
