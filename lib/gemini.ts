@@ -18,8 +18,8 @@ if (!apiKey) {
 const genAI = new GoogleGenerativeAI(apiKey);
 
 export async function generateLabFromNotes(notes: string): Promise<LabResponse> {
-  const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-  const model = genAI.getGenerativeModel({ model: modelName });
+  const preferred = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  let model = genAI.getGenerativeModel({ model: preferred });
 
   const prompt =
     "Transform the following messy lecture notes into a structured interactive coding lab. " +
@@ -27,7 +27,18 @@ export async function generateLabFromNotes(notes: string): Promise<LabResponse> 
     "Use concise, actionable steps. Include code snippets when helpful. Notes:\n" +
     notes;
 
-  const result = await model.generateContent(prompt);
+  let result;
+  try {
+    result = await model.generateContent(prompt);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("404 Not Found")) {
+      model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      result = await model.generateContent(prompt);
+    } else {
+      throw e;
+    }
+  }
   const text = result.response.text().trim();
 
   try {
